@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Camara Shopping · Aforo</title>
+  <style>
+    :root { color-scheme:dark; --bg:#09111f; --panel:#121d2f; --muted:#91a1b9; --line:#263750; --green:#42d392; --red:#ff6b79; --cyan:#5ed8ff; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:Inter,Segoe UI,sans-serif; background:radial-gradient(circle at 20% 0,#142847 0,var(--bg) 42%); color:#f6f8fc; min-height:100vh; }
+    main { width:min(1120px,calc(100% - 32px)); margin:auto; padding:34px 0 50px; }
+    header { display:flex; align-items:flex-end; justify-content:space-between; gap:18px; margin-bottom:24px; }
+    h1 { margin:0; font-size:clamp(1.7rem,4vw,2.6rem); letter-spacing:-.04em; }
+    header p,.muted { color:var(--muted); margin:.35rem 0 0; }
+    .status { display:flex; align-items:center; gap:8px; white-space:nowrap; color:var(--muted); }
+    .dot { width:10px; height:10px; border-radius:50%; background:var(--red); box-shadow:0 0 12px currentColor; }
+    .dot.online { background:var(--green); }
+    .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
+    .card,.panel { background:rgba(18,29,47,.88); border:1px solid var(--line); border-radius:18px; box-shadow:0 18px 48px #0004; }
+    .card { padding:19px; }
+    .label { color:var(--muted); font-size:.8rem; text-transform:uppercase; letter-spacing:.09em; }
+    .value { font-size:2.25rem; font-weight:750; margin-top:5px; }
+    .value.green { color:var(--green); } .value.red { color:var(--red); } .value.cyan { color:var(--cyan); }
+    .grid { display:grid; grid-template-columns:1.35fr 1fr; gap:14px; margin-top:14px; }
+    .panel { padding:20px; min-width:0; }
+    .panel h2 { margin:0 0 18px; font-size:1rem; }
+    .chart { height:240px; display:flex; gap:5px; align-items:flex-end; border-bottom:1px solid var(--line); padding-top:15px; }
+    .hour { flex:1; height:100%; display:flex; gap:2px; align-items:flex-end; position:relative; }
+    .bar { flex:1; min-height:0; border-radius:4px 4px 0 0; transition:height .35s; }
+    .bar.in { background:var(--green); } .bar.out { background:var(--red); }
+    .hour span { position:absolute; bottom:-23px; width:100%; text-align:center; color:var(--muted); font-size:.65rem; }
+    .legend { display:flex; gap:18px; color:var(--muted); font-size:.78rem; margin-top:34px; }
+    .key::before { content:""; display:inline-block; width:9px; height:9px; background:currentColor; border-radius:2px; margin-right:6px; }
+    .key.in { color:var(--green); } .key.out { color:var(--red); }
+    .table-wrap { max-height:295px; overflow:auto; }
+    table { width:100%; border-collapse:collapse; font-size:.86rem; }
+    th { position:sticky; top:0; background:var(--panel); color:var(--muted); text-align:left; font-weight:500; }
+    td,th { padding:10px 7px; border-bottom:1px solid var(--line); }
+    .pill { border:1px solid currentColor; border-radius:999px; padding:2px 8px; font-weight:650; }
+    .pill.IN { color:var(--green); } .pill.OUT { color:var(--red); } .pill.RESET { color:var(--cyan); }
+    .empty { color:var(--muted); padding:28px 0; text-align:center; }
+    footer { color:var(--muted); font-size:.76rem; margin-top:16px; text-align:right; }
+    @media (max-width:800px) { .cards { grid-template-columns:repeat(2,1fr); } .grid { grid-template-columns:1fr; } header { align-items:flex-start; flex-direction:column; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div><h1>Camara Shopping</h1><p>Conteo anónimo de entradas, salidas y aforo</p></div>
+    <div class="status"><i id="status-dot" class="dot"></i><span id="status-text">Consultando tracker…</span></div>
+  </header>
+  <section class="cards">
+    <article class="card"><div class="label">Aforo actual</div><div id="aforo" class="value cyan">0</div></article>
+    <article class="card"><div class="label">Entradas hoy</div><div id="entradas" class="value green">0</div></article>
+    <article class="card"><div class="label">Salidas hoy</div><div id="salidas" class="value red">0</div></article>
+    <article class="card"><div class="label">Capacidad disponible</div><div id="disponible" class="value">30</div></article>
+  </section>
+  <section class="grid">
+    <article class="panel">
+      <h2>Movimiento por hora</h2>
+      <div id="chart" class="chart"></div>
+      <div class="legend"><span class="key in">Entradas</span><span class="key out">Salidas</span></div>
+    </article>
+    <article class="panel">
+      <h2>Últimos eventos</h2>
+      <div class="table-wrap"><table><thead><tr><th>Hora</th><th>Tipo</th><th>Aforo</th></tr></thead><tbody id="events"></tbody></table></div>
+      <div id="empty" class="empty" hidden>Todavía no hay cruces registrados.</div>
+    </article>
+  </section>
+  <footer id="updated">Sin actualizar</footer>
+</main>
+<script>
+  const $ = id => document.getElementById(id);
+  const formatTime = value => value ? new Date(value).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—';
+  async function getJson(url) { const response=await fetch(url,{cache:'no-store'}); if(!response.ok) throw new Error(await response.text()); return response.json(); }
+  function drawChart(series) {
+    const max=Math.max(1,...series.flatMap(x=>[x.entradas,x.salidas]));
+    $('chart').innerHTML=series.map((x,i)=>`<div class="hour" title="${x.hora}: ${x.entradas} entradas, ${x.salidas} salidas"><i class="bar in" style="height:${x.entradas/max*100}%"></i><i class="bar out" style="height:${x.salidas/max*100}%"></i>${i%3===0?`<span>${String(i).padStart(2,'0')}</span>`:''}</div>`).join('');
+  }
+  function drawEvents(events) {
+    $('empty').hidden=events.length>0;
+    $('events').innerHTML=events.map(x=>`<tr><td>${formatTime(x.timestamp)}</td><td><span class="pill ${x.tipo}">${x.tipo}</span></td><td>${x.aforo_actual}</td></tr>`).join('');
+  }
+  async function refresh() {
+    try {
+      const [summary,series,events]=await Promise.all([getJson('/api/resumen'),getJson('/api/series/hora'),getJson('/api/eventos?limit=30')]);
+      $('aforo').textContent=summary.aforo; $('entradas').textContent=summary.entradas; $('salidas').textContent=summary.salidas;
+      $('disponible').textContent=Math.max(0,summary.maximo-summary.aforo);
+      $('status-dot').classList.toggle('online',summary.tracker.activo); $('status-text').textContent=summary.tracker.mensaje;
+      drawChart(series); drawEvents(events); $('updated').textContent=`Actualizado ${new Date().toLocaleTimeString('es-AR')}`;
+    } catch(error) { $('status-text').textContent='Dashboard sin conexión a la API'; console.error(error); }
+  }
+  refresh(); setInterval(refresh,2000);
+</script>
+</body>
+</html>
